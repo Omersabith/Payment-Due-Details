@@ -12,8 +12,8 @@ st.set_page_config(layout="wide", page_title="Payment Due Dashboard", page_icon=
 def load_data():
     file_path = "MasterData.csv"
     try:
-        # Using 'utf-8-sig' to handle Byte Order Mark (BOM) from Excel-saved CSVs
-        # sep=None allows pandas to automatically detect if it's tab or comma separated
+        # Using 'utf-8-sig' to handle Byte Order Mark (BOM)
+        # sep=None allows pandas to automatically detect delimiter
         df = pd.read_csv(file_path, sep=None, engine='python', encoding='utf-8-sig')
     except FileNotFoundError:
         st.error(f"Error: '{file_path}' not found in the repository.")
@@ -22,16 +22,8 @@ def load_data():
         st.error(f"Error reading file: {e}")
         return pd.DataFrame()
 
-    # Clean column names: strip spaces and convert to UPPERCASE for consistency
+    # Clean column names
     df.columns = df.columns.str.strip().str.upper()
-
-    # Verify essential columns exist
-    required = ["DATE", "BALANCE", "DAYS", "SALESMAN NAME", "CUSTOMER NAME"]
-    missing = [col for col in required if col not in df.columns]
-    if missing:
-        st.error(f"Missing columns: {', '.join(missing)}")
-        st.write("Columns found in your file:", list(df.columns))
-        st.stop()
 
     # Data Type Conversion
     df["DATE"] = pd.to_datetime(df["DATE"], dayfirst=True, errors="coerce")
@@ -39,7 +31,7 @@ def load_data():
     df["BALANCE"] = pd.to_numeric(df["BALANCE"], errors="coerce").fillna(0)
     df["DAYS"] = pd.to_numeric(df["DAYS"], errors="coerce").fillna(0)
 
-    # NEW AGING CATEGORIES
+    # Define Aging Categories
     def categorize_aging(days):
         if days <= 60: 
             return "Below 60"
@@ -54,7 +46,7 @@ def load_data():
     
     df["AGING CATEGORY"] = df["DAYS"].apply(categorize_aging)
     
-    # Ensure categories appear in the correct logical order in charts
+    # Define logical order for categories
     category_order = ["Below 60", "61-90", "91-120", "121-180", "Above 180"]
     df["AGING CATEGORY"] = pd.Categorical(df["AGING CATEGORY"], categories=category_order, ordered=True)
     
@@ -68,18 +60,26 @@ if df.empty:
 # =========================
 # SIDEBAR FILTERS
 # =========================
-st.sidebar.header("🔍 Filter Options")
+st.sidebar.header("🔍 Quick Analysis Filters")
 
-# Salesman Filter
+# 1. Aging Category Filter (Added for quick analysis)
+aging_list = ["Below 60", "61-90", "91-120", "121-180", "Above 180"]
+selected_aging = st.sidebar.multiselect("Select Aging Category", aging_list, default=aging_list)
+
+# 2. Salesman Filter
 salesman_list = sorted(df["SALESMAN NAME"].unique().tolist())
 selected_salesman = st.sidebar.multiselect("Select Salesman", salesman_list, default=salesman_list)
 
-# Customer Filter (Filtered by Salesman)
+# 3. Customer Filter
 customer_list = sorted(df[df["SALESMAN NAME"].isin(selected_salesman)]["CUSTOMER NAME"].unique().tolist())
 selected_customer = st.sidebar.multiselect("Select Customer", customer_list, default=customer_list)
 
-# Apply filters to dataframe
-mask = (df["SALESMAN NAME"].isin(selected_salesman)) & (df["CUSTOMER NAME"].isin(selected_customer))
+# Apply All Filters
+mask = (
+    (df["AGING CATEGORY"].isin(selected_aging)) & 
+    (df["SALESMAN NAME"].isin(selected_salesman)) & 
+    (df["CUSTOMER NAME"].isin(selected_customer))
+)
 filtered_df = df[mask]
 
 # =========================
@@ -91,7 +91,7 @@ st.title("💰 Payment Due Details Dashboard")
 m1, m2, m3 = st.columns(3)
 m1.metric("Total Outstanding", f"{filtered_df['BALANCE'].sum():,.2f} OMR")
 m2.metric("Total Invoices", len(filtered_df))
-m3.metric("Avg Days Overdue", f"{filtered_df['DAYS'].mean():.0f} Days")
+m3.metric("Avg Days Overdue", f"{filtered_df['DAYS'].mean():.0f} Days" if not filtered_df.empty else "0 Days")
 
 st.markdown("---")
 
@@ -99,14 +99,14 @@ st.markdown("---")
 c1, c2 = st.columns(2)
 
 with c1:
-    # Donut Chart for the requested Aging Categories
-    aging_data = filtered_df.groupby("AGING CATEGORY", observed=False)["BALANCE"].sum().reset_index()
+    # Donut Chart for Aging Categories
+    aging_summary = filtered_df.groupby("AGING CATEGORY", observed=False)["BALANCE"].sum().reset_index()
     fig_donut = px.pie(
-        aging_data, 
+        aging_summary, 
         values="BALANCE", 
         names="AGING CATEGORY", 
         hole=0.5,
-        title="Due Amount by Aging Bucket",
+        title="Due Amount Distribution",
         color_discrete_sequence=px.colors.qualitative.Pastel
     )
     fig_donut.update_traces(textposition='inside', textinfo='percent+label')
@@ -114,9 +114,9 @@ with c1:
 
 with c2:
     # Bar Chart for Outstanding Balance by Salesman
-    sales_data = filtered_df.groupby("SALESMAN NAME")["BALANCE"].sum().reset_index().sort_values("BALANCE", ascending=False)
+    sales_summary = filtered_df.groupby("SALESMAN NAME")["BALANCE"].sum().reset_index().sort_values("BALANCE", ascending=False)
     fig_bar = px.bar(
-        sales_data,
+        sales_summary,
         x="SALESMAN NAME",
         y="BALANCE",
         title="Outstanding Balance by Salesman",
@@ -128,9 +128,12 @@ with c2:
 # Trend Line
 st.markdown("---")
 st.subheader("📅 Payment Due Trend")
-trend_df = filtered_df.sort_values("DATE").groupby("DATE")["BALANCE"].sum().reset_index()
-fig_trend = px.line(trend_df, x="DATE", y="BALANCE", markers=True, title="Balance Over Time")
-st.plotly_chart(fig_trend, use_container_width=True)
+if not filtered_df.empty:
+    trend_df = filtered_df.sort_values("DATE").groupby("DATE")["BALANCE"].sum().reset_index()
+    fig_trend = px.line(trend_df, x="DATE", y="BALANCE", markers=True)
+    st.plotly_chart(fig_trend, use_container_width=True)
+else:
+    st.info("No data available for the selected filters.")
 
 # Data Table
 st.markdown("---")
